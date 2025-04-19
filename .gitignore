@@ -1,0 +1,18 @@
+# Ignore model results (e.g., graphs, plots, etc.)
+Model-Results/
+
+# Ignore hyperparameter tuning outputs
+Tuners/
+
+# Ignore specific file
+GuidedProject_MLG382_2025.pdf
+
+# (Optional) Ignore temporary files from Jupyter and Python
+*.ipynb_checkpoints
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.DS_Store
+.env
+*.env

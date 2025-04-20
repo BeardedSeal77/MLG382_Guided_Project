@@ -1,0 +1,7 @@
+services:
+  - type: web
+    name: dash-ml-app
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn src.app:server
+    plan: free

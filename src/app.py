@@ -2,8 +2,8 @@ import dash
 import os
 
 
-from layout import create_layout
-from callbacks import *
+from src.layout import create_layout
+from src.callbacks import *
 
 app = dash.Dash(__name__, assets_folder="assets", suppress_callback_exceptions=True)
 server = app.server

@@ -93,8 +93,7 @@ student-performance/
 
 1. Clone the repository
 2. Install required packages: `pip install -r requirements.txt`
-3. Run the Jupyter notebook: `jupyter notebook main.ipynb`
-4. Launch the web app: `python src/app.py`
+
 
 ## Contributors
 

@@ -1,7 +1,6 @@
 import dash
 import os
 
-
 from src.layout import create_layout
 from src.callbacks import *
 

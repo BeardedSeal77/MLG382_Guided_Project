@@ -4,8 +4,6 @@ Model-Results/
 # Ignore hyperparameter tuning outputs
 Tuners/
 
-# Ignore specific file
-GuidedProject_MLG382_2025.pdf
 
 # (Optional) Ignore temporary files from Jupyter and Python
 *.ipynb_checkpoints

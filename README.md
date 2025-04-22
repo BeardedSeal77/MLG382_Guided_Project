@@ -1,5 +1,7 @@
 # MLG382_Guided_Project
 
+Report submission is under Documentation/
+
 # Student Performance Analysis & Prediction
 
 This project analyzes student performance data to identify at-risk students and provide actionable insights for BrightPath Academy. Using machine learning models, we predict student grade classifications based on various factors, with special emphasis on understanding the impact of extracurricular activities on academic outcomes.

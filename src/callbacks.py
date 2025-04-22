@@ -1,12 +1,8 @@
 import dash
-from dash import callback, Input, Output, State, dcc, html
+from dash import callback, Input, Output, State, html
 import pandas as pd
 import numpy as np
-import pickle
 import tensorflow as tf
-import base64
-import io
-import os
 from dash.exceptions import PreventUpdate
 
 # Define mapping for grade classes
@@ -18,8 +14,9 @@ grade_mapping = {
     4: 'F'
 }
 
+# Return color based on grade class
 def get_grade_color(grade_class):
-    """Return color based on grade class"""
+
     colors = {
         0: "#28a745",  # A - Green
         1: "#17a2b8",  # B - Teal
@@ -29,50 +26,47 @@ def get_grade_color(grade_class):
     }
     return colors.get(grade_class, "#6c757d")
 
-# Cache for loaded models to avoid reloading
-model_cache = {}
+# Load the model at startup
+interpreter = tf.lite.Interpreter(model_path="./Artifacts/models/DL_model.tflite")
+interpreter.allocate_tensors()
+input_details = interpreter.get_input_details()
+output_details = interpreter.get_output_details()
 
-def get_model(model_type):
-    """Load and cache the appropriate model based on selection"""
-    if model_type in model_cache:
-        return model_cache[model_type]
+# Print expected input shape for debugging
+print("Expected input shape:", input_details[0]['shape'])
+
+# missing the scaling parameters, initialize with zeros
+feature_names = [
+    "Age", "Gender", "ParentalEducation", 
+    "StudyTimeWeekly", "Absences", "Tutoring", "ParentalSupport",
+    "Extracurricular", "Sports", "Music", "Volunteering",
+    "StudyAbsenceRatio", "SportsMusic", "TotalSupport"
+]
+
+# Create default scaling parameters (no scaling)
+train_mean = pd.Series(0, index=feature_names)
+train_std = pd.Series(1, index=feature_names)
+
+# Try to load from files if they exist
+try: # Massive debugging because scaling values not loading on render
+    loaded_mean = pd.read_csv("./Artifacts/predictions/DL_train_mean.csv", index_col=0).squeeze("columns")
+    loaded_std = pd.read_csv("./Artifacts/predictions/DL_train_std.csv", index_col=0).squeeze("columns")
     
-    if model_type == "DL":
-        # Load TensorFlow Lite model
-        interpreter = tf.lite.Interpreter(model_path="./Artifacts/models/DL_model.tflite")
-        interpreter.allocate_tensors()
-        model_cache[model_type] = {
-            "type": "tflite",
-            "model": interpreter
-        }
-    else:
-        # Load other models (pickle files)
-        model_path = f"./Artifacts/models/{model_type}_model.pkl"
-        with open(model_path, 'rb') as file:
-            loaded_model = pickle.load(file)
-        model_cache[model_type] = {
-            "type": "sklearn",
-            "model": loaded_model
-        }
+    # Update our default series with any values that exist in the files
+    for feature in loaded_mean.index:
+        if feature in train_mean.index:
+            train_mean[feature] = loaded_mean[feature]
+            train_std[feature] = loaded_std[feature]
     
-    return model_cache[model_type]
+    print("Loaded scaling parameters for:", list(loaded_mean.index))
+except Exception as e:
+    print(f"Warning: Could not load scaling parameters: {e}")
+    # Continue with default scaling (no scaling)
 
-def load_scaling_params():
-    """Load mean and std deviation for feature scaling"""
-    train_mean = pd.read_csv("./Artifacts/predictions/DL_train_mean.csv", index_col=0).squeeze("columns")
-    train_std = pd.read_csv("./Artifacts/predictions/DL_train_std.csv", index_col=0).squeeze("columns")
-    return train_mean, train_std
-
-
-
-# Register callbacks directly with Dash application
 @callback(
-    [Output("prediction-output", "children"),
-     Output("confidence-output", "children")],
-    
+    Output("prediction-output", "children"),
     Input("submit", "n_clicks"),
-    [State("model-selector", "value"),
-     State("age", "value"),
+    [State("age", "value"),
      State("gender", "value"),
      State("parentaleducation", "value"),
      State("studytimeweekly", "value"),
@@ -84,79 +78,98 @@ def load_scaling_params():
      State("music", "value"),
      State("volunteering", "value")]
 )
-def predict_grade(n_clicks, model_type, age, gender, parental_education, 
-                  study_time, absences, tutoring, parental_support, 
-                  extracurricular, sports, music, volunteering):
-    """Predict student's grade based on input features"""
-    if n_clicks is None or n_clicks == 0:
+
+# Predict student's grade based on input features
+def predict_grade(n_clicks, age, gender, parental_education, study_time_weekly, 
+                 absences, tutoring, parental_support, extracurricular, sports, music, volunteering):
+    if not n_clicks:
         raise PreventUpdate
+
+    if None in [age, gender, parental_education, study_time_weekly, absences, tutoring, 
+                parental_support, extracurricular, sports, music, volunteering]:
+        return html.Div("Please fill in all input fields.", 
+                       style={"color": "#dc3545", "fontWeight": "bold"})
+
+    try:
+        # Calculate derived features
+        study_absence_ratio = study_time_weekly / (absences + 1)
+        sports_music = sports * music
+        total_support = parental_support + tutoring
+
+        # Create input data with all features - as a simple list first
+        input_values = [
+            age, gender, parental_education, study_time_weekly, absences, 
+            tutoring, parental_support, extracurricular, sports, music, 
+            volunteering, study_absence_ratio, sports_music, total_support
+        ]
         
-    if None in [age, gender, parental_education, study_time, absences, 
-                tutoring, parental_support, extracurricular, sports, music, volunteering]:
-        return "Please fill in all input fields.", ""
-    
-    # Prepare input data
-    feature_names = [
-        "Age", "Gender", "ParentalEducation",
-        "StudyTimeWeekly", "Absences", "Tutoring", "ParentalSupport",
-        "Extracurricular", "Sports", "Music", "Volunteering"
-    ]
-    
-    input_data = [age, gender, parental_education, study_time, absences, 
-                  tutoring, parental_support, extracurricular, sports, music, volunteering]
-    
-    input_df = pd.DataFrame([input_data], columns=feature_names)
-    
-    # Load scaling parameters
-    train_mean, train_std = load_scaling_params()
-    
-    # Scale input data - only use the columns that exist in the input data
-    scaled_mean = train_mean[train_mean.index.isin(feature_names)]
-    scaled_std = train_std[train_std.index.isin(feature_names)]
-    input_scaled = (input_df - scaled_mean) / scaled_std
-    
-    # Get model
-    model_info = get_model(model_type)
-    
-    # Make prediction
-    if model_info["type"] == "tflite":
-        interpreter = model_info["model"]
-        input_details = interpreter.get_input_details()
-        output_details = interpreter.get_output_details()
+        print("Input values:", input_values)
         
-        input_array = np.array(input_scaled, dtype=np.float32)
+        # Create a proper numpy array with shape (1, 14)
+        input_array = np.array([input_values], dtype=np.float32)
+        
+        print("Initial array shape:", input_array.shape)
+        
+        # Scale the input features manually
+        for i, feature in enumerate(feature_names):
+            input_array[0, i] = (input_array[0, i] - train_mean[feature]) / train_std[feature]
+            
+        # Fill any NaN values with zeros
+        input_array = np.nan_to_num(input_array)
+        
+        print("Scaled array shape:", input_array.shape)
+        print("Scaled array:", input_array)
+        
+        # Set tensor and invoke model
         interpreter.set_tensor(input_details[0]['index'], input_array)
         interpreter.invoke()
         output_data = interpreter.get_tensor(output_details[0]['index'])
         
-        predicted_class = np.argmax(output_data[0])
-        confidence = float(output_data[0][predicted_class]) * 100
-    else:
-        model = model_info["model"]
-        predicted_class = model.predict(input_scaled)[0]
+        # Get prediction and confidence
+        predicted_class = int(np.argmax(output_data))
+        confidence = float(np.max(output_data)) * 100
+        grade = grade_mapping[predicted_class]
+        color = get_grade_color(predicted_class)
         
-        # Get probabilities if available
-        if hasattr(model, 'predict_proba'):
-            proba = model.predict_proba(input_scaled)[0]
-            confidence = float(proba[predicted_class]) * 100
-        else:
-            confidence = None
-    
-    # Format result
-    result_div = html.Div([
-        html.H3("Prediction Result:", style={"marginBottom": "10px"}),
-        html.Div([
-            html.Span("Predicted Grade: ", style={"fontWeight": "bold"}),
-            html.Span(f"{grade_mapping[predicted_class]}", 
-                     style={"fontSize": "24px", "color": get_grade_color(predicted_class)})
-        ], style={"fontSize": "18px"})
-    ], style={"textAlign": "center", "padding": "20px", "backgroundColor": "#f8f9fa", "borderRadius": "5px"})
-    
-    confidence_div = ""
-    if confidence is not None:
-        confidence_div = html.Div([
-            html.P(f"Confidence: {confidence:.2f}%", 
-                  style={"fontSize": "16px", "marginTop": "10px"})
-        ], style={"textAlign": "center"})
-    
-    return result_div, confidence_div
+        # Build simple result UI
+        result_div = html.Div([
+            html.H3("Prediction Result"),
+            html.P(f"Predicted Grade: {grade}", style={
+                "fontSize": "24px",
+                "color": color,
+                "fontWeight": "bold"
+            }),
+            html.P(f"Confidence: {confidence:.2f}%", style={
+                "fontSize": "16px", 
+                "marginTop": "10px"
+            }),
+            html.Div([
+                html.H4("Calculated Features"),
+                html.P(f"Study/Absence Ratio: {study_absence_ratio:.2f}"),
+                html.P(f"Sports & Music: {sports_music}"),
+                html.P(f"Total Support: {total_support}")
+            ], style={"marginTop": "15px", "textAlign": "left"})
+        ], style={
+            "textAlign": "center",
+            "padding": "20px",
+            "backgroundColor": "#f8f9fa",
+            "borderRadius": "5px"
+        })
+
+        return result_div
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        
+        # Return the error message to display to the user
+        return html.Div([
+            html.H3("Error", style={"color": "#dc3545"}),
+            html.P(f"Error during prediction: {str(e)}"),
+            html.Pre(traceback.format_exc(), style={"whiteSpace": "pre-wrap"})
+        ], style={
+            "textAlign": "left",
+            "padding": "20px",
+            "backgroundColor": "#f8f9fa",
+            "borderRadius": "5px",
+            "border": "1px solid #dc3545"
+        })
